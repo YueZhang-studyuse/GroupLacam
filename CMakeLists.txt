@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.16)
 project(lacam2-project CXX)
 
+# Find Boost
+ADD_DEFINITIONS(-DBOOST_LOG_DYN_LINK)
+#SET(Boost_USE_STATIC_LIBS ON)
+find_package( Boost 1.49.0 REQUIRED)
+
+include_directories( ${Boost_INCLUDE_DIRS} )
+
 add_subdirectory(./lacam2)
 add_subdirectory(./third_party/argparse)
 add_subdirectory(./third_party/googletest)
@@ -17,5 +24,5 @@ foreach(file ${TEST_FILES})
   add_executable(${name} ${file} ${TEST_MAIN_FUNC})
   target_link_libraries(${name} lacam2 gtest)
 endforeach()
-add_executable(test_all ${TEST_MAIN_FUNC} ${TEST_FILES})
+add_executable(test_all ${TEST_MAIN_FUNC} ${TEST_FILES} ${Boost_LIBRARIES})
 target_link_libraries(test_all lacam2 gtest)

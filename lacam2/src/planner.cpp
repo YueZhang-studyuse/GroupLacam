@@ -86,6 +86,121 @@ Planner::Planner(const Instance* _ins, const Deadline* _deadline,
 
 Planner::~Planner() {}
 
+Solution Planner::solve_group_pibt(std::string& additional_info)
+{
+  solver_info(1, "start search");
+
+  // setup agents
+  for (auto i = 0; i < N; ++i) A[i] = new Agent(i);
+
+  // setup search
+
+  // insert initial node, 'H': high-level node
+  auto H_init = new HNode(ins->starts, D, nullptr, 0, get_h_value(ins->starts));
+
+  std::vector<Config> solution;
+  auto C_new = Config(N, nullptr);  // for new configuration
+  HNode* H_goal = nullptr;          // to store goal node
+
+  // unordered_set<Group, GroupHash> explored_groups; //set of explored groups
+
+  //the current node
+  auto H = H_init;
+  //group tracking at current node
+  std::unordered_map<int,std::vector<std::pair<int,int>>> current_group_map; //temporary group map for current node, key: temp group id, value: list of (agent id, location id)
+  std::vector<int> agent_to_group(N, -1); //map from agent id to temp group id
+
+  // DFS
+  while (!is_expired(deadline)) 
+  {
+    // check goal condition
+    if (H_goal == nullptr && is_same_config(H->C, ins->goals)) 
+    {
+      H_goal = H;
+      solver_info(1, "found solution, cost: ", H->g);
+      break;
+    }
+
+    //first find the groups in the current configuration H
+    //generate constraints
+    //clear previous group info
+    //generate configurations with pibt
+    for (auto a : A) 
+    {
+      // clear previous cache
+      if (a->v_now != nullptr && occupied_now[a->v_now->id] == a) 
+      {
+        occupied_now[a->v_now->id] = nullptr;
+      }
+      if (a->v_next != nullptr) 
+      {
+        occupied_next[a->v_next->id] = nullptr;
+        a->v_next = nullptr;
+      }
+      // set occupied now
+      a->v_now = H->C[a->id];
+      occupied_now[a->v_now->id] = a;
+    }
+
+    // // add constraints
+    // for (uint k = 0; k < L->depth; ++k) 
+    // {
+    //   const auto i = L->who[k];        // agent
+    //   const auto l = L->where[k]->id;  // loc
+
+    //   // check vertex collision
+    //   if (occupied_next[l] != nullptr) return false;
+    //   // check swap collision
+    //   auto l_pre = H->C[i]->id;
+    //   if (occupied_next[l_pre] != nullptr && occupied_now[l] != nullptr &&
+    //       occupied_next[l_pre]->id == occupied_now[l]->id)
+    //     return false;
+
+    //   // set occupied_next
+    //   A[i]->v_next = L->where[k];
+    //   occupied_next[l] = A[i];
+    // }
+
+    // perform PIBT
+    for (auto k : H->order) 
+    {
+      auto a = A[k];
+      funcPIBT(a);
+    }
+
+    // // create successors at the high-level search
+    // const auto res = get_new_config(H, L);
+    // delete L;  // free
+    // if (!res) continue;
+
+    // create new configuration
+    for (auto a : A) C_new[a->id] = a->v_next;
+  }
+
+  // backtrack
+  if (H_goal != nullptr) {
+    auto H = H_goal;
+    while (H != nullptr) {
+      solution.push_back(H->C);
+      H = H->parent;
+    }
+    std::reverse(solution.begin(), solution.end());
+  }
+
+  // logging
+  // additional_info +=
+  //     "optimal=" + std::to_string(H_goal != nullptr && OPEN.empty()) + "\n";
+  // additional_info += "objective=" + std::to_string(objective) + "\n";
+  // additional_info += "loop_cnt=" + std::to_string(loop_cnt) + "\n";
+  // additional_info += "num_node_gen=" + std::to_string(EXPLORED.size()) + "\n";
+
+  // memory management
+  for (auto a : A) delete a;
+  // for (auto itr : EXPLORED) delete itr.second;
+
+  return solution;
+}
+
 Solution Planner::solve(std::string& additional_info)
 {
   solver_info(1, "start search");

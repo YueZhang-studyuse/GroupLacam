@@ -19,6 +19,7 @@
 #include <tuple>
 #include <unordered_map>
 #include <vector>
+#include <boost/functional/hash.hpp>
 
 using Time = std::chrono::steady_clock;
 

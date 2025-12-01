@@ -35,15 +35,21 @@ HNode::HNode(const Config& _C, DistTable& D, HNode* _parent, const uint _g,
   if (parent != nullptr) parent->neighbor.insert(this);
 
   // set priorities
-  if (parent == nullptr) {
+  if (parent == nullptr) 
+  {
     // initialize
     for (uint i = 0; i < N; ++i) priorities[i] = (float)D.get(i, C[i]) / N;
   } else {
     // dynamic priorities, akin to PIBT
-    for (size_t i = 0; i < N; ++i) {
-      if (D.get(i, C[i]) != 0) {
+    for (size_t i = 0; i < N; ++i) 
+    {
+      if (D.get(i, C[i]) != 0) 
+      {
         priorities[i] = parent->priorities[i] + 1;
-      } else {
+      } 
+      else 
+      {
+        //std::cout<<"reach goal: "<<i<<std::endl;
         priorities[i] = parent->priorities[i] - (int)parent->priorities[i];
       }
     }
@@ -94,25 +100,28 @@ Solution Planner::solve_group_pibt(std::string& additional_info)
   for (auto i = 0; i < N; ++i) A[i] = new Agent(i);
 
   // setup search
+  auto OPEN = std::vector<HNode*>();
 
   // insert initial node, 'H': high-level node
   auto H_init = new HNode(ins->starts, D, nullptr, 0, get_h_value(ins->starts));
+  OPEN.push_back(H_init);
 
   std::vector<Config> solution;
   auto C_new = Config(N, nullptr);  // for new configuration
   HNode* H_goal = nullptr;          // to store goal node
 
-  // unordered_set<Group, GroupHash> explored_groups; //set of explored groups
+  std::unordered_set<Group, GroupHash> explored_groups; //set of explored groups
+  
 
-  //the current node
-  auto H = H_init;
   //group tracking at current node
-  std::unordered_map<int,std::vector<std::pair<int,int>>> current_group_map; //temporary group map for current node, key: temp group id, value: list of (agent id, location id)
+  std::unordered_map<int,std::vector<std::pair<uint,uint>>> current_group_map; //temporary group map for current node, key: temp group id, value: list of (agent id, location id)
   std::vector<int> agent_to_group(N, -1); //map from agent id to temp group id
 
   // DFS
   while (!is_expired(deadline)) 
   {
+    auto H = OPEN.back(); //get current node
+
     // check goal condition
     if (H_goal == nullptr && is_same_config(H->C, ins->goals)) 
     {
@@ -123,8 +132,7 @@ Solution Planner::solve_group_pibt(std::string& additional_info)
 
     //first find the groups in the current configuration H
     //generate constraints
-    //clear previous group info
-    //generate configurations with pibt
+
     for (auto a : A) 
     {
       // clear previous cache
@@ -142,61 +150,101 @@ Solution Planner::solve_group_pibt(std::string& additional_info)
       occupied_now[a->v_now->id] = a;
     }
 
-    // // add constraints
-    // for (uint k = 0; k < L->depth; ++k) 
-    // {
-    //   const auto i = L->who[k];        // agent
-    //   const auto l = L->where[k]->id;  // loc
-
-    //   // check vertex collision
-    //   if (occupied_next[l] != nullptr) return false;
-    //   // check swap collision
-    //   auto l_pre = H->C[i]->id;
-    //   if (occupied_next[l_pre] != nullptr && occupied_now[l] != nullptr &&
-    //       occupied_next[l_pre]->id == occupied_now[l]->id)
-    //     return false;
-
-    //   // set occupied_next
-    //   A[i]->v_next = L->where[k];
-    //   occupied_next[l] = A[i];
-    // }
+    // Todo: check group duplicates and add constraints
+    //first find the groups in the current configuration H
+    //generate constraints
 
     // perform PIBT
+    std::fill(agent_to_group.begin(), agent_to_group.end(), -1);
+
+    bool succ = true;
     for (auto k : H->order) 
     {
       auto a = A[k];
-      funcPIBT(a);
+      if(a->v_next == nullptr && !funcGroupPIBT(a,agent_to_group))
+      {
+        // deadlock, return to the same configuration
+        succ = false;
+        break;
+      }
     }
 
-    // // create successors at the high-level search
-    // const auto res = get_new_config(H, L);
-    // delete L;  // free
-    // if (!res) continue;
+    // if success, create new configuration
+    if (succ)
+    { 
+      for (auto a : A) C_new[a->id] = a->v_next;
+      //update current group map
+      current_group_map.clear();
+      for (auto i = 0; i < N; ++i)
+      {
+        int gid = agent_to_group[i];
+        if (gid == -1) continue; //not in any group
+        current_group_map[gid].push_back(std::make_pair(i, C_new[i]->id));
+      }
 
-    // create new configuration
-    for (auto a : A) C_new[a->id] = a->v_next;
+      //insert new grouop or update existing group if needed
+      for (const auto& gid_pairs : current_group_map)
+      {
+        if (gid_pairs.second.size() <= 1) continue;  //single agent, skip
+        
+        std::cout<<"insert/update group: "<<gid_pairs.first<<" with agents size: "<<gid_pairs.second.size()<<"agents: ";
+        for (const auto& p : gid_pairs.second)
+        {
+          std::cout<<p.first<<" ";
+        }
+        std::cout<<std::endl;
+
+        Group g(gid_pairs.second);
+        g.add_timestep(H->g);
+        //check if this group has been explored
+        if (explored_groups.find(g) == explored_groups.end())
+        {
+          //new group found
+          std::cout<<"new group!"<<std::endl;
+          explored_groups.insert(g);
+        }
+        else
+        {
+          std::cout<<"existing group!"<<std::endl;
+        }
+
+      }
+    }
+    else
+    {
+      //stay in the same configuration
+      C_new = H->C; 
+    }
+
+    // insert new node (actually we are pibt only, so maybe we don't need an OPEN, todo: leave to further optimisation)
+    const auto H_new = new HNode(C_new, D, H, H->g + get_edge_cost(H->C, C_new), get_h_value(C_new));
+    OPEN.push_back(H_new);
   }
 
   // backtrack
-  if (H_goal != nullptr) {
+  if (H_goal != nullptr) 
+  {
     auto H = H_goal;
-    while (H != nullptr) {
+    while (H != nullptr) 
+    {
       solution.push_back(H->C);
       H = H->parent;
     }
     std::reverse(solution.begin(), solution.end());
   }
 
-  // logging
-  // additional_info +=
-  //     "optimal=" + std::to_string(H_goal != nullptr && OPEN.empty()) + "\n";
-  // additional_info += "objective=" + std::to_string(objective) + "\n";
-  // additional_info += "loop_cnt=" + std::to_string(loop_cnt) + "\n";
-  // additional_info += "num_node_gen=" + std::to_string(EXPLORED.size()) + "\n";
+  // clean up high level nodes in OPEN
+  for (auto H_node : OPEN)
+  {
+    delete H_node;    
+  }
+  OPEN.clear();
+
+  // clean up explored groups (free LNode search trees within each group)
+  clearExploredGroups(explored_groups);
 
   // memory management
   for (auto a : A) delete a;
-  // for (auto itr : EXPLORED) delete itr.second;
 
   return solution;
 }
@@ -426,6 +474,137 @@ bool Planner::get_new_config(HNode* H, LNode* L)
     if (a->v_next == nullptr && !funcPIBT(a)) return false;  // planning failure
   }
   return true;
+}
+
+bool Planner::funcGroupPIBT(Agent* ai, std::vector<int>& current_group_track)
+{
+  //std::cout<<"planning for agent: "<<ai->id<<" at location: "<<ai->v_now->id<<std::endl;
+  const auto i = ai->id;
+  const auto K = ai->v_now->neighbor.size();
+
+  // get candidates for next locations
+  for (auto k = 0; k < K; ++k) 
+  {
+    auto u = ai->v_now->neighbor[k];
+    C_next[i][k] = u;
+    if (MT != nullptr)
+      tie_breakers[u->id] = get_random_float(MT);  // set tie-breaker
+  }
+  C_next[i][K] = ai->v_now;
+
+  // sort
+  std::sort(C_next[i].begin(), C_next[i].begin() + K + 1,
+            [&](Vertex* const v, Vertex* const u) {
+              return D.get(i, v) + tie_breakers[v->id] <
+                     D.get(i, u) + tie_breakers[u->id];
+            });
+
+  // main operation
+  for (auto k = 0; k < K + 1; ++k) 
+  {
+    auto u = C_next[i][k];
+
+    // avoid vertex conflicts
+    if (occupied_next[u->id] != nullptr)
+    {
+      //std::cout<<"vertex conflict for agent: "<<i<<" at location: "<<u->id<<" with agent "<<occupied_next[u->id]->id<<std::endl;
+      mergeGroup(i, occupied_next[u->id]->id, current_group_track);
+      continue;
+    }
+
+    auto& ak = occupied_now[u->id];
+
+    // avoid swap conflicts
+    if (ak != nullptr && ak->v_next == ai->v_now)
+    {
+      //swap conflict, group
+      //std::cout<<"swap conflict for agent: "<<i<<" with agent: "<<ak->id<<" at location: "<<u->id<<std::endl;
+      mergeGroup(i, ak->id, current_group_track);
+      continue;
+    }
+
+    // reserve next location
+    occupied_next[u->id] = ai;
+    ai->v_next = u;
+
+    // priority inheritance
+    if (ak != nullptr && ak != ai && ak->v_next == nullptr)
+    {
+      //priority inheritance, group
+      //std::cout<<"priority inheritance for agent: "<<i<<" with agent: "<<ak->id<<" at location: "<<u->id<<std::endl;
+      mergeGroup(i, ak->id, current_group_track);
+      if(!funcGroupPIBT(ak,current_group_track))
+      {
+        continue;
+      }
+    }
+
+    //std::cout<<"agent: "<<i<<" from location "<<ai->v_now->id<<" planned to location: "<<ai->v_next->id<<std::endl;
+    
+    return true;
+  }
+
+  // // failed to secure node
+  // // in this case, agent should already have group
+  // std::cout<<"failed to plan for agent: "<<i<<" at location: "<<ai->v_now->id<<std::endl;
+  // std::cout<<"current group id: "<<current_group_track[i]<<std::endl;
+  // std::cout<<"current groups: ";
+  // for (auto gid : current_group_track)
+  // {
+  //   std::cout<<gid<<" ";
+  // }
+  // std::cout<<std::endl;
+
+  assert(current_group_track[i] != -1 && "Failed agents have no group");
+  
+  occupied_next[ai->v_now->id] = ai;
+  ai->v_next = ai->v_now;
+  return false;
+}
+
+void Planner::mergeGroup(uint current_id, uint to_merge_id, std::vector<int>& current_group_track)
+{
+  if (current_group_track[current_id] != -1 && current_group_track[to_merge_id] != -1 && current_group_track[current_id] == current_group_track[to_merge_id])
+    return; //already in the same group
+  //std::cout<<"merging groups for agents: "<<current_id<<" and "<<to_merge_id<<std::endl;
+  int group_id = std::max(current_group_track[current_id], current_group_track[to_merge_id]);
+
+  //either one does not have a group yet
+  if(current_group_track[current_id] == -1 || current_group_track[to_merge_id] == -1)
+  {
+    if (current_group_track[current_id] == -1 && current_group_track[to_merge_id] == -1)
+    {
+      //both do not have a group yet, create a new group id
+      group_id = std::max(current_id, to_merge_id); //new group id
+    }
+    current_group_track[current_id] = group_id;
+    current_group_track[to_merge_id] = group_id;
+    return;
+  }
+  //both belongs to a group, needs to merge
+  for(auto& entry : current_group_track)
+  {
+    if(entry == current_group_track[current_id] || entry == current_group_track[to_merge_id])
+      entry = group_id;
+  }
+  return;
+}
+
+void Planner::clearExploredGroups(std::unordered_set<Group, GroupHash>& explored_groups)
+{
+  // Clean up all LNode search trees in each group
+  for (auto& group : explored_groups)
+  {
+    // Need to const_cast because group is const in unordered_set
+    Group& mutable_group = const_cast<Group&>(group);
+    while (!mutable_group.search_tree.empty())
+    {
+      delete mutable_group.search_tree.front();
+      mutable_group.search_tree.pop();
+    }
+  }
+  // Clear the set
+  explored_groups.clear();
 }
 
 bool Planner::funcPIBT(Agent* ai)

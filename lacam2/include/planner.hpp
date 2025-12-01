@@ -181,6 +181,9 @@ struct Planner {
   uint get_h_value(const Config& C);
   bool get_new_config(HNode* H, LNode* L);
   bool funcPIBT(Agent* ai);
+  bool funcGroupPIBT(Agent* ai, std::vector<int>& current_group_track);
+  void mergeGroup(uint current_id, uint to_merge_id, std::vector<int>& current_group_track);
+  void clearExploredGroups(std::unordered_set<Group, GroupHash>& explored_groups);
 
   // swap operation
   Agent* swap_possible_and_required(Agent* ai);
